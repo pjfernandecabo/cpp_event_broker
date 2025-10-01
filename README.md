@@ -5,6 +5,18 @@ Los eventos se generan en un hilo **publisher** y se envían a todos los cliente
 
 ## Estructura del proyecto
 
+```css
+
+cpp_event_broker/
+├── include/
+|  └── EventQueue.hpp
+├── src/
+│   └── main.cpp
+├── CMakeLists.txt
+└── README.md
+```
+
+
 - `include/EventQueue.hpp` → Clase thread-safe para manejar la cola de eventos.
 - `src/main.cpp` → Servidor WebSocket y lógica de broadcast.
 - `CMakeLists.txt` → Para compilar el proyecto con CMake.
