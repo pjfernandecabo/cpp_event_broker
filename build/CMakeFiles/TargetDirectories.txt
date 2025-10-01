@@ -1,0 +1,3 @@
+/home/pedro/Projects/cpp_event_broker/build/CMakeFiles/event_broker.dir
+/home/pedro/Projects/cpp_event_broker/build/CMakeFiles/edit_cache.dir
+/home/pedro/Projects/cpp_event_broker/build/CMakeFiles/rebuild_cache.dir
