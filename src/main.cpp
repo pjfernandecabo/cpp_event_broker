@@ -1,4 +1,4 @@
-#include "EventQueue.hpp"
+#include "../include/EventQueue.hpp"
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/asio.hpp>
@@ -14,26 +14,23 @@ namespace websocket = beast::websocket;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
 
-/*
- * Estructura que representa un cliente conectado
- * Cada cliente tiene su websocket y un mutex propio para proteger write()
- */
+// Estructura cliente con mutex propio y lista de suscripciones
 struct Client {
     std::shared_ptr<websocket::stream<tcp::socket>> ws;
     std::shared_ptr<std::mutex> write_mutex;
+    std::vector<std::string> subscriptions; // ej: {"sensor", "log"}
 };
 
-// Lista global de clientes conectados
-std::vector<Client> clients;
-std::mutex clients_mutex; // Mutex para proteger la lista de clientes
+std::vector<Client> clients;        // Lista global de clientes
+std::mutex clients_mutex;           // Mutex para proteger la lista
 
-// Añade un cliente a la lista
+// Añadir cliente
 void add_client(std::shared_ptr<websocket::stream<tcp::socket>> ws) {
     std::lock_guard<std::mutex> lock(clients_mutex);
-    clients.push_back({ws, std::make_shared<std::mutex>()});
+    clients.push_back({ws, std::make_shared<std::mutex>(), {}});
 }
 
-// Elimina un cliente de la lista
+// Eliminar cliente
 void remove_client(std::shared_ptr<websocket::stream<tcp::socket>> ws) {
     std::lock_guard<std::mutex> lock(clients_mutex);
     clients.erase(std::remove_if(clients.begin(), clients.end(),
@@ -41,39 +38,56 @@ void remove_client(std::shared_ptr<websocket::stream<tcp::socket>> ws) {
                  clients.end());
 }
 
-// Envía un mensaje a todos los clientes conectados (broadcast)
-void broadcast(const std::string& msg) {
+// Broadcast solo a clientes suscritos al tipo de evento
+void broadcast(const Event& event) {
     std::lock_guard<std::mutex> lock(clients_mutex);
     for (auto& client : clients) {
-        try {
-            // Bloquea el mutex del cliente para evitar conflictos de escritura
-            std::lock_guard<std::mutex> lock_ws(*client.write_mutex);
-            client.ws->write(net::buffer(msg));
-        } catch (...) {
-            std::cerr << "[Broker] Error al enviar a un cliente." << std::endl;
+        if (std::find(client.subscriptions.begin(),
+                      client.subscriptions.end(),
+                      event.type) != client.subscriptions.end()) 
+        {
+            try {
+                std::lock_guard<std::mutex> lock_ws(*client.write_mutex);
+                std::string msg = "{ \"type\": \"" + event.type +
+                                  "\", \"payload\": \"" + event.payload + "\" }";
+                client.ws->write(net::buffer(msg));
+            } catch (...) {
+                std::cerr << "[Broker] Error al enviar a un cliente." << std::endl;
+            }
         }
     }
 }
 
-// Maneja la sesión de un cliente individual
+// Manejo de sesión de cliente
 void do_session(tcp::socket socket, EventQueue& queue) {
     try {
         auto ws = std::make_shared<websocket::stream<tcp::socket>>(std::move(socket));
-        ws->accept();           // Acepta handshake WebSocket
-        add_client(ws);         // Añade a la lista de clientes
+        ws->accept();
+        add_client(ws);
 
         std::cout << "[Broker] Cliente conectado." << std::endl;
 
-        // Mantener la conexión activa
+        // Recibir mensajes de suscripción del cliente
         for (;;) {
             beast::flat_buffer buffer;
-            ws->read(buffer); // Bloquea esperando posibles mensajes del cliente
+            ws->read(buffer);
+            std::string msg = beast::buffers_to_string(buffer.data());
+
+            if (msg.rfind("SUBSCRIBE:", 0) == 0) {
+                std::string type = msg.substr(10); // lo que viene después de "SUBSCRIBE:"
+                std::lock_guard<std::mutex> lock(clients_mutex);
+                for (auto& client : clients) {
+                    if (client.ws == ws) {
+                        client.subscriptions.push_back(type);
+                        std::cout << "[Broker] Cliente suscrito a: " << type << std::endl;
+                    }
+                }
+            }
         }
 
     } catch (std::exception const& e) {
         std::cerr << "[Broker] Cliente desconectado: " << e.what() << std::endl;
-        // Eliminar de la lista de clientes
-        // remove_client(ws);  // Opcional si quieres limpiar inmediatamente
+        remove_client(nullptr); // limpiamos cliente
     }
 }
 
@@ -81,32 +95,38 @@ int main() {
     try {
         EventQueue queue;
 
-        // Hilo publisher: genera eventos cada 2 segundos y los pone en la cola
+        // Publisher: genera eventos de distintos tipos
         std::thread publisher([&queue]() {
             int counter = 1;
             while (true) {
-                std::string event = "Evento " + std::to_string(counter++);
-                std::cout << "[Publisher] Generando: " << event << std::endl;
-                queue.push(event);
-                std::this_thread::sleep_for(std::chrono::seconds(4));
+                Event ev1{"sensor", "Temperatura: " + std::to_string(20 + (counter % 5)) + "°C"};
+                Event ev2{"log", "CPU al " + std::to_string(70 + (counter % 10)) + "%"};
+                Event ev3{"system", "Evento del sistema #" + std::to_string(counter)};
+
+                queue.push(ev1);
+                queue.push(ev2);
+                queue.push(ev3);
+
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                counter++;
             }
         });
 
         net::io_context ioc;
-        tcp::acceptor acceptor(ioc, {tcp::v4(), 9002}); // Puerto del servidor
+        tcp::acceptor acceptor(ioc, {tcp::v4(), 9002});
 
-        // Hilo consumidor: toma eventos de la cola y los envía a todos los clientes
+        // Consumidor: envía eventos a clientes suscritos
         std::thread consumer([&queue]() {
             while (true) {
-                std::string event = queue.pop();
-                std::cout << "[Broker] Enviando a todos: " << event << std::endl;
+                Event event = queue.pop();
+                std::cout << "[Broker] Enviando (" << event.type << "): " << event.payload << std::endl;
                 broadcast(event);
             }
         });
 
         std::cout << "Servidor activo en ws://localhost:9002 ..." << std::endl;
 
-        // Loop principal para aceptar nuevas conexiones de clientes
+        // Acepta clientes en bucle
         for (;;) {
             tcp::socket socket(ioc);
             acceptor.accept(socket);
@@ -120,3 +140,4 @@ int main() {
         std::cerr << "[Broker] Error: " << e.what() << std::endl;
     }
 }
+

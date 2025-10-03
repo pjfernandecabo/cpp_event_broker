@@ -1,27 +1,32 @@
 #pragma once
 #include <queue>
-#include <string>
 #include <mutex>
 #include <condition_variable>
+#include <string>
 
 /*
- * Clase thread-safe que representa la cola de eventos.
- * Los hilos pueden push() y pop() eventos de manera concurrente
- * sin riesgo de race conditions.
+ * Representa un evento con tipo y contenido.
+ * Ejemplo: { "type": "sensor", "payload": "Temperatura: 23°C" }
+ */
+struct Event {
+    std::string type;
+    std::string payload;
+};
+
+/*
+ * Clase thread-safe que gestiona una cola de eventos.
+ * Varios hilos pueden producir (push) y consumir (pop) de forma segura.
  */
 class EventQueue {
 public:
-    // Inserta un evento en la cola
-    void push(const std::string& event) {
-        std::lock_guard<std::mutex> lock(mutex_); // Bloquea mutex durante el push
+    void push(const Event& event) {
+        std::lock_guard<std::mutex> lock(mutex_);
         queue_.push(event);
-        cv_.notify_one(); // Despierta un hilo que pueda estar esperando en pop()
+        cv_.notify_one();
     }
 
-    // Extrae un evento de la cola
-    std::string pop() {
+    Event pop() {
         std::unique_lock<std::mutex> lock(mutex_);
-        // Espera hasta que haya un evento disponible
         cv_.wait(lock, [this] { return !queue_.empty(); });
         auto event = queue_.front();
         queue_.pop();
@@ -29,9 +34,10 @@ public:
     }
 
 private:
-    std::queue<std::string> queue_;           // Cola interna de eventos
-    std::mutex mutex_;                        // Mutex para proteger acceso concurrente
-    std::condition_variable cv_;              // Condición para notificar disponibilidad
+    std::queue<Event> queue_;
+    std::mutex mutex_;
+    std::condition_variable cv_;
 };
+
 
 
