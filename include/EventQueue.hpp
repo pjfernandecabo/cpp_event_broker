@@ -4,31 +4,33 @@
 #include <condition_variable>
 #include <string>
 
-/*
- * Representa un evento con tipo y contenido.
- * Ejemplo: { "type": "sensor", "payload": "Temperatura: 23°C" }
- */
+// ======================================================
+// Estructura que representa un evento genérico.
+// Más adelante podremos añadir campos como tipo, timestamp, prioridad, etc.
+// ======================================================
 struct Event {
-    std::string type;
-    std::string payload;
+    std::string data;   // Contenido del evento
 };
 
-/*
- * Clase thread-safe que gestiona una cola de eventos.
- * Varios hilos pueden producir (push) y consumir (pop) de forma segura.
- */
+// ======================================================
+// Clase EventQueue
+// Cola segura para múltiples hilos (thread-safe queue).
+// Se usa para comunicar eventos entre el publisher, el broker y los clientes.
+// ======================================================
 class EventQueue {
 public:
+    // Inserta un nuevo evento en la cola
     void push(const Event& event) {
         std::lock_guard<std::mutex> lock(mutex_);
         queue_.push(event);
-        cv_.notify_one();
+        cond_.notify_one();
     }
 
+    // Extrae un evento de la cola (bloqueante si está vacía)
     Event pop() {
         std::unique_lock<std::mutex> lock(mutex_);
-        cv_.wait(lock, [this] { return !queue_.empty(); });
-        auto event = queue_.front();
+        cond_.wait(lock, [&]{ return !queue_.empty(); });
+        Event event = queue_.front();
         queue_.pop();
         return event;
     }
@@ -36,7 +38,7 @@ public:
 private:
     std::queue<Event> queue_;
     std::mutex mutex_;
-    std::condition_variable cv_;
+    std::condition_variable cond_;
 };
 
 

@@ -1,143 +1,100 @@
-#include "../include/EventQueue.hpp"
-#include <boost/beast/core.hpp>
-#include <boost/beast/websocket.hpp>
-#include <boost/asio.hpp>
+//#define BOOST_ASIO_NO_DEPRECATED
+//#define ASIO_STANDALONE
+//#define _WEBSOCKETPP_CPP11_STL_
+
+#include <websocketpp/config/asio_no_tls.hpp>
+#include <websocketpp/server.hpp>
 #include <iostream>
+#include <set>
 #include <thread>
-#include <mutex>
-#include <vector>
-#include <memory>
-#include <algorithm>
+#include <chrono>
+#include "EventQueue.hpp"
 
-namespace beast = boost::beast;
-namespace websocket = beast::websocket;
-namespace net = boost::asio;
-using tcp = net::ip::tcp;
+// ======================================================
+// Alias para simplificar el uso del servidor WebSocket++
+// ======================================================
+typedef websocketpp::server<websocketpp::config::asio> server;
 
-// Estructura cliente con mutex propio y lista de suscripciones
-struct Client {
-    std::shared_ptr<websocket::stream<tcp::socket>> ws;
-    std::shared_ptr<std::mutex> write_mutex;
-    std::vector<std::string> subscriptions; // ej: {"sensor", "log"}
-};
+EventQueue queue;                 // Cola global de eventos
+std::set<websocketpp::connection_hdl, std::owner_less<websocketpp::connection_hdl>> clients;
+std::mutex clients_mutex;
 
-std::vector<Client> clients;        // Lista global de clientes
-std::mutex clients_mutex;           // Mutex para proteger la lista
-
-// Añadir cliente
-void add_client(std::shared_ptr<websocket::stream<tcp::socket>> ws) {
-    std::lock_guard<std::mutex> lock(clients_mutex);
-    clients.push_back({ws, std::make_shared<std::mutex>(), {}});
+// ======================================================
+// Función que publica eventos de forma periódica
+// ======================================================
+void publisher() {
+    for (int i = 1; i <= 15; ++i) {
+        std::string msg = "Evento " + std::to_string(i);
+        Event event{msg};                  // ✅ creamos un objeto Event
+        queue.push(event);                 // lo enviamos a la cola
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    std::cout << "[Publisher] Finalizado.\n";
 }
 
-// Eliminar cliente
-void remove_client(std::shared_ptr<websocket::stream<tcp::socket>> ws) {
-    std::lock_guard<std::mutex> lock(clients_mutex);
-    clients.erase(std::remove_if(clients.begin(), clients.end(),
-                 [&](const Client& c){ return c.ws == ws; }),
-                 clients.end());
-}
+// ======================================================
+// Broker: extrae eventos de la cola y los envía a todos los clientes conectados
+// ======================================================
+void broker(server* s) {
+    while (true) {
+        Event event = queue.pop();
+        std::string payload = event.data;
 
-// Broadcast solo a clientes suscritos al tipo de evento
-void broadcast(const Event& event) {
-    std::lock_guard<std::mutex> lock(clients_mutex);
-    for (auto& client : clients) {
-        if (std::find(client.subscriptions.begin(),
-                      client.subscriptions.end(),
-                      event.type) != client.subscriptions.end()) 
-        {
-            try {
-                std::lock_guard<std::mutex> lock_ws(*client.write_mutex);
-                std::string msg = "{ \"type\": \"" + event.type +
-                                  "\", \"payload\": \"" + event.payload + "\" }";
-                client.ws->write(net::buffer(msg));
-            } catch (...) {
-                std::cerr << "[Broker] Error al enviar a un cliente." << std::endl;
-            }
+        std::lock_guard<std::mutex> lock(clients_mutex);
+        for (auto& hdl : clients) {
+            s->send(hdl, payload, websocketpp::frame::opcode::text);
         }
+
+        std::cout << "[Broker] Enviado: " << payload << std::endl;
     }
 }
 
-// Manejo de sesión de cliente
-void do_session(tcp::socket socket, EventQueue& queue) {
-    try {
-        auto ws = std::make_shared<websocket::stream<tcp::socket>>(std::move(socket));
-        ws->accept();
-        add_client(ws);
-
-        std::cout << "[Broker] Cliente conectado." << std::endl;
-
-        // Recibir mensajes de suscripción del cliente
-        for (;;) {
-            beast::flat_buffer buffer;
-            ws->read(buffer);
-            std::string msg = beast::buffers_to_string(buffer.data());
-
-            if (msg.rfind("SUBSCRIBE:", 0) == 0) {
-                std::string type = msg.substr(10); // lo que viene después de "SUBSCRIBE:"
-                std::lock_guard<std::mutex> lock(clients_mutex);
-                for (auto& client : clients) {
-                    if (client.ws == ws) {
-                        client.subscriptions.push_back(type);
-                        std::cout << "[Broker] Cliente suscrito a: " << type << std::endl;
-                    }
-                }
-            }
-        }
-
-    } catch (std::exception const& e) {
-        std::cerr << "[Broker] Cliente desconectado: " << e.what() << std::endl;
-        remove_client(nullptr); // limpiamos cliente
-    }
+// ======================================================
+// Manejadores del servidor WebSocket
+// ======================================================
+void on_open(websocketpp::connection_hdl hdl) {
+    std::lock_guard<std::mutex> lock(clients_mutex);
+    clients.insert(hdl);
+    std::cout << "[Server] Cliente conectado.\n";
 }
 
+void on_close(websocketpp::connection_hdl hdl) {
+    std::lock_guard<std::mutex> lock(clients_mutex);
+    clients.erase(hdl);
+    std::cout << "[Server] Cliente desconectado.\n";
+}
+
+// ======================================================
+// Función principal
+// ======================================================
 int main() {
+    server print_server;
+
     try {
-        EventQueue queue;
+        print_server.set_access_channels(websocketpp::log::alevel::none);
+        print_server.init_asio();
 
-        // Publisher: genera eventos de distintos tipos
-        std::thread publisher([&queue]() {
-            int counter = 1;
-            while (true) {
-                Event ev1{"sensor", "Temperatura: " + std::to_string(20 + (counter % 5)) + "°C"};
-                Event ev2{"log", "CPU al " + std::to_string(70 + (counter % 10)) + "%"};
-                Event ev3{"system", "Evento del sistema #" + std::to_string(counter)};
+        print_server.set_open_handler(&on_open);
+        print_server.set_close_handler(&on_close);
 
-                queue.push(ev1);
-                queue.push(ev2);
-                queue.push(ev3);
+        print_server.listen(9002);
+        print_server.start_accept();
 
-                std::this_thread::sleep_for(std::chrono::seconds(3));
-                counter++;
-            }
-        });
+        std::thread broker_thread(broker, &print_server);
+        std::thread publisher_thread(publisher);
 
-        net::io_context ioc;
-        tcp::acceptor acceptor(ioc, {tcp::v4(), 9002});
+        std::cout << "[Server] Esperando conexiones en ws://localhost:9002 ...\n";
+        print_server.run();
 
-        // Consumidor: envía eventos a clientes suscritos
-        std::thread consumer([&queue]() {
-            while (true) {
-                Event event = queue.pop();
-                std::cout << "[Broker] Enviando (" << event.type << "): " << event.payload << std::endl;
-                broadcast(event);
-            }
-        });
+        broker_thread.join();
+        publisher_thread.join();
 
-        std::cout << "Servidor activo en ws://localhost:9002 ..." << std::endl;
-
-        // Acepta clientes en bucle
-        for (;;) {
-            tcp::socket socket(ioc);
-            acceptor.accept(socket);
-            std::thread(&do_session, std::move(socket), std::ref(queue)).detach();
-        }
-
-        publisher.join();
-        consumer.join();
-
-    } catch (std::exception const& e) {
-        std::cerr << "[Broker] Error: " << e.what() << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[Error] " << e.what() << std::endl;
     }
+
+    return 0;
 }
+
+
 

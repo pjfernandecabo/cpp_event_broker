@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/logger_smartptr.dir/src/logger_smartptr.cpp.o -o logger_smartptr 
