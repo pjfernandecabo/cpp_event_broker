@@ -22,18 +22,56 @@ Esto permite navegar fácilmente por las distintas etapas de desarrollo del proy
 - `hora-8`: Opción de **desuscripción** (`UNSUBSCRIBE`) desde clientes
 - ... y así sucesivamente
 
+# Estructura del proyecto
+
+```css
+
+cpp_event_broker/
+├── include/
+|  └── EventQueue.hpp
+├── src/
+│   └── main.cpp
+├── CMakeLists.txt
+└── README.md
+```
+
+
+- `include/EventQueue.hpp` → Clase thread-safe para manejar la cola de eventos.
+- `src/main.cpp` → Servidor WebSocket y lógica de broadcast.
+- `CMakeLists.txt` → Para compilar el proyecto con CMake.
+- `README.md` → Documentación básica.
+
 ## 🛠️ Requisitos
 - **C++17 o superior**
 - [CMake](https://cmake.org/) (>= 3.10)
 - [WebSocket++](https://github.com/zaphoyd/websocketpp)
 - Python 3.9+ con librería `websockets`
+- Boost.Beast
+
 
 ## 🚀 Cómo compilar
+
+In CMakeLists.tx:
+```bash
+# Archivos fuente principales
+add_executable(prueba 
+            src/main.cpp
+)
+```
+then
+
 ```bash
 mkdir build && cd build
 cmake ..
 make
-./event_broker
+./prueba
+```
+
+o una compilacion rapida:
+```c
+g++ -std=c++17 almacen_productos.cpp -o almacen
+./almacen
+
 ```
 
 ## 🐍 Ejecución de cliente Python

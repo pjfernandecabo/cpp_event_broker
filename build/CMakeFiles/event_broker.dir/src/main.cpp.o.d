@@ -836,4 +836,6 @@ CMakeFiles/event_broker.dir/src/main.cpp.o: \
  /home/pedro/Projects/cpp_event_broker/external/websocketpp/websocketpp/impl/endpoint_impl.hpp \
  /usr/include/c++/11/set /usr/include/c++/11/bits/stl_set.h \
  /usr/include/c++/11/bits/stl_multiset.h \
- /home/pedro/Projects/cpp_event_broker/include/EventQueue.hpp
+ /home/pedro/Projects/cpp_event_broker/include/EventQueue.hpp \
+ /home/pedro/Projects/cpp_event_broker/include/EventBuffer.hpp \
+ /home/pedro/Projects/cpp_event_broker/include/CircularBuffer.hpp

@@ -9,6 +9,7 @@
 #include <thread>
 #include <chrono>
 #include "EventQueue.hpp"
+#include "EventBuffer.hpp"
 
 // ======================================================
 // Alias para simplificar el uso del servidor WebSocket++
@@ -16,6 +17,7 @@
 typedef websocketpp::server<websocketpp::config::asio> server;
 
 EventQueue queue;                 // Cola global de eventos
+EventBuffer recentEvents;               // Buffer de eventos
 std::set<websocketpp::connection_hdl, std::owner_less<websocketpp::connection_hdl>> clients;
 std::mutex clients_mutex;
 
@@ -71,6 +73,10 @@ int main() {
     server print_server;
 
     try {
+
+        /**
+         * Configuración del servidor
+         
         print_server.set_access_channels(websocketpp::log::alevel::none);
         print_server.init_asio();
 
@@ -88,7 +94,13 @@ int main() {
 
         broker_thread.join();
         publisher_thread.join();
+ */
 
+        recentEvents.add("Sensor conectado");
+        recentEvents.add("Movimiento detectado");
+
+for (auto& e : recentEvents)
+    std::cout << e << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "[Error] " << e.what() << std::endl;
     }
